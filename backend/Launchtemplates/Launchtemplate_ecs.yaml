@@ -1,0 +1,384 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+ This template creates a Launchtemplate which can be used with an Autoscaling
+ Group for ECS Instances
+ Last Modified: 20 September 2018
+ Author: Exec <aerioeus@gmail.com>
+
+
+Parameters:
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names
+    Type : 'AWS::SSM::Parameter::Value<String>'
+    Default: /energicos/ENVIRONMENT_NAME
+
+  Owner:
+    Description: Enter Team or Individual Name Responsible for the Stack.
+    Type: String
+    Default: Andreas Rose
+
+  Project:
+    Description: Enter Project Name.
+    Type: String
+    Default: Invoicegen
+
+  InstanceType:
+    Description: Which instance type should we use to build the ECS cluster?
+    Type: String
+    Default: t2.micro
+
+  Version:
+    Description: Select a valid and existing KeyPair name
+    Type: String
+    Default: Version1
+
+  MountPoint: # delivers the mountpoint name for the command to create the mountpoint directory further down
+    Description: The Linux mount point for the EFS volume
+    Type: String
+    MinLength: '1'
+    Default: efs
+
+
+Mappings:
+
+    # These are the latest ECS optimized AMIs as of Sept 2018:
+    #
+    #   amzn-ami-2017.09.h-amazon-ecs-optimized
+    #   ECS agent:    1.20.3
+    #   Docker:       18.06.1-ce
+    #   ecs-init:     1.20.3-1
+    #
+    # You can find the latest available on this page of our documentation:
+    # http://docs.aws.amazon.com/AmazonECS/latest/developerguide/ecs-optimized_AMI.html
+    # (note the AMI identifier is region specific)
+
+    AWSRegionToAMI:
+        us-east-2:
+            AMI: ami-09a64272e7fe706b6
+        us-east-1:
+            AMI: ami-0b9a214f40c38d5eb
+        us-west-2:
+            AMI: ami-00430184c7bb49914
+        us-west-1:
+            AMI: ami-0e7dd5fe55b87a5fe
+        eu-west-3:
+            AMI: ami-06b685336aa497c15
+        eu-west-2:
+            AMI: ami-0209769f0c963e791
+        eu-west-1:
+            AMI: ami-05b65c0f6a75c1c64
+        eu-central-1:
+            AMI: ami-0bb804e8cd910a66
+        ap-northeast-2:
+            AMI: ami-0d947b1901b27a37c
+        ap-northeast-1:
+            AMI: ami-08681de00a0aae54f
+        ap-southeast-2:
+            AMI: ami-05b48eda7f92aadbe
+        ap-southeast-1:
+            AMI: ami-0a3f70f0255af1d29
+        ca-central-1:
+            AMI: ami-00d1bdbd447b5933a
+        ap-south-1:
+            AMI: ami-0590d0dd683026eab
+        sa-east-1:
+            AMI: ami-01bca91ecf4c1f494
+
+
+
+Resources:
+
+  ECSLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: ECSLaunchtemplate
+      LaunchTemplateData:
+        SecurityGroupIds:
+        - Fn::ImportValue: !Sub ${EnvironmentName}-ECSInstancesSecurityGroupID
+        ImageId:
+          !FindInMap
+          - AWSRegionToAMI
+          - !Ref "AWS::Region"
+          - AMI
+        IamInstanceProfile:
+           Arn:
+             Fn::ImportValue:
+              !Sub ${EnvironmentName}-ecsInstanceProfileARN
+        KeyName:
+            Fn::ImportValue:
+              !Sub ${EnvironmentName}-ECSKeyPairName
+        InstanceType: !Ref InstanceType
+        Monitoring:
+          Enabled: true
+        CreditSpecification:
+          CpuCredits: standard
+        TagSpecifications:
+         - ResourceType: instance
+           Tags:
+           - Key: "keyname1"
+             Value: "value1"
+        UserData:
+          Fn::Base64: !Sub
+            - |
+                #!/bin/bash
+                yum update -y
+                yum update -y aws-cfn-bootstrap
+                /opt/aws/bin/cfn-init -v --region ${AWS::Region} --stack ${AWS::StackName} --resource ECSLaunchTemplate --region ${AWS::Region} crontab /home/ec2-user/crontab
+                /opt/aws/bin/cfn-signal -e $? --region ${AWS::Region} --stack ${AWS::StackName} --resource ECSAutoScalingGroup
+                #Join the Invoiceapp ECS cluster
+                echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
+                PATH=$PATH:/usr/local/bin
+            - ECSCluster:
+                Fn::ImportValue:
+                  !Sub ${EnvironmentName}-ECSClusterName
+
+
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          MountConfig:
+          - setup
+          - mount
+
+# define the Setup Config set
+        setup:
+          packages:
+            yum:
+              nfs-utils: []
+              awslogs: []
+
+          files:
+            # define the CloudFormation update hook: cfn-hup
+            # define the cfn-hub.config
+            "/etc/cfn/cfn-hup.conf":
+              mode: 000400
+              owner: root
+              group: root
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+                interval=15
+                verbose=true
+              mode: '000400'
+              owner: root
+              group: root
+            # define a hook to watch for changes for a metadata of a this specific resource [LaunchTemplate]
+            "/etc/cfn/hooks.d/cfn-auto-reloader.conf":
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.ECSLaunchTemplate.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --region ${AWS::Region} --stack ${AWS::StackName} --resource ECSLaunchTemplate
+                runas=root
+              mode: '000400'
+              owner: root
+              group: root
+            # Set the region to send CloudWatch Logs data to (the region where the container instance is located) and install the cwlogs plugin on the instances
+            "/etc/awslogs/awscli.conf":
+              content: !Sub |
+                [plugins]
+                cwlogs = cwlogs
+                [default]
+                region = ${AWS::Region}
+            # Inject the CloudWatch Logs configuration file contents to define the CloudWatch Logs agent configuration file log streams
+            "/etc/awslogs/awslogs.conf":
+              content: !Sub |
+                [general]
+                state_file = /var/lib/awslogs/agent-stat
+
+                [/var/log/dmesg]
+                file = /var/log/dmesg
+                log_group_name=Fn::ImportValue: !Sub ${EnvironmentName}-ECSClusterName-/var/log/dmesg
+                log_stream_name = {cluster}/{container_instance_id}
+
+                [/var/log/messages]
+                file = /var/log/messages
+                log_group_name=Fn::ImportValue: !Sub ${EnvironmentName}-ECSClusterName-/var/log/messages
+                log_stream_name=Fn::ImportValue: !Sub ${EnvironmentName}-ECSClusterName-/{ECS_INSTANCE_ATTRIBUTES}
+                datetime_format = %b %d %H:%M:%S
+
+                [/var/log/docker]
+                file = /var/log/docker
+                log_group_name=Fn::ImportValue: !Sub ${EnvironmentName}-ECSClusterName-/var/log/docker
+                log_stream_name=Fn::ImportValue: !Sub ${EnvironmentName}-ECSClusterName-/{ECS_INSTANCE_ATTRIBUTES}
+                datetime_format = %Y-%m-%dT%H:%M:%S.%f
+
+                [/var/log/ecs/ecs-init.log]
+                file = /var/log/ecs/ecs-init.log
+                log_group_name=Fn::ImportValue: !Sub ${EnvironmentName}-ECSClusterName-/var/log/ecs/ecs-init.log
+                log_stream_name=Fn::ImportValue: !Sub ${EnvironmentName}-ECSClusterName-/{ECS_INSTANCE_ATTRIBUTES}
+                datetime_format = %Y-%m-%dT%H:%M:%SZ
+
+                [/var/log/ecs/ecs-agent.log]
+                file = /var/log/ecs/ecs-agent.log.*
+                log_group_name=Fn::ImportValue: !Sub ${EnvironmentName}-ECSClusterName-/var/log/ecs/ecs-agent.log
+                log_stream_name=Fn::ImportValue: !Sub ${EnvironmentName}-ECSClusterName-/{ECS_INSTANCE_ATTRIBUTES}
+                datetime_format = %Y-%m-%dT%H:%M:%SZ
+
+                [/var/log/ecs/audit.log]
+                file = /var/log/ecs/audit.log.*
+                log_group_name=Fn::ImportValue: !Sub ${EnvironmentName}-ECSClusterName-/var/log/ecs/audit.log
+                log_stream_name=Fn::ImportValue: !Sub ${EnvironmentName}-ECSClusterName-/{ECS_INSTANCE_ATTRIBUTES}
+                datetime_format = %Y-%m-%dT%H:%M:%SZ
+
+
+# create a netstat directory to store MetricData
+            "/home/ec2-user/post_nfsstat":
+              content: !Sub |
+                #!/bin/bash
+
+                INPUT="$(cat)"
+                CW_JSON_OPEN='{ "Namespace": "EFS", "MetricData": [ '
+                CW_JSON_CLOSE=' ] }'
+                CW_JSON_METRIC=''
+                METRIC_COUNTER=0
+
+                for COL in 1 2 3 4 5 6; do
+
+                 COUNTER=0
+                 METRIC_FIELD=$COL
+                 DATA_FIELD=$(($COL+($COL-1)))
+
+                 while read line; do
+                   if [[ COUNTER -gt 0 ]]; then
+
+                     LINE=`echo $line | tr -s ' ' `
+                     AWS_COMMAND="aws cloudwatch put-metric-data --region ${AWS::Region}"
+                     MOD=$(( $COUNTER % 2))
+
+                     if [ $MOD -eq 1 ]; then
+                       METRIC_NAME=`echo $LINE | cut -d ' ' -f $METRIC_FIELD`
+                     else
+                       METRIC_VALUE=`echo $LINE | cut -d ' ' -f $DATA_FIELD`
+                     fi
+
+                     if [[ -n "$METRIC_NAME" && -n "$METRIC_VALUE" ]]; then
+                       INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+                       CW_JSON_METRIC="$CW_JSON_METRIC { \"MetricName\": \"$METRIC_NAME\", \"Dimensions\": [{\"Name\": \"InstanceId\", \"Value\": \"$INSTANCE_ID\"} ], \"Value\": $METRIC_VALUE },"
+                       unset METRIC_NAME
+                       unset METRIC_VALUE
+
+                       METRIC_COUNTER=$((METRIC_COUNTER+1))
+                       if [ $METRIC_COUNTER -eq 20 ]; then
+                         # 20 is max metric collection size, so we have to submit here
+                         aws cloudwatch put-metric-data --region ${AWS::Region} --cli-input-json "`echo $CW_JSON_OPEN ${!CW_JSON_METRIC%?} $CW_JSON_CLOSE`"
+
+                         # reset
+                         METRIC_COUNTER=0
+                         CW_JSON_METRIC=''
+                       fi
+                     fi
+
+
+
+                     COUNTER=$((COUNTER+1))
+                   fi
+
+                   if [[ "$line" == "Client nfs v4:" ]]; then
+                     # the next line is the good stuff
+                     COUNTER=$((COUNTER+1))
+                   fi
+                 done <<< "$INPUT"
+                done
+
+                # submit whatever is left
+                aws cloudwatch put-metric-data --region ${AWS::Region} --cli-input-json "`echo $CW_JSON_OPEN ${!CW_JSON_METRIC%?} $CW_JSON_CLOSE`"
+              mode: '000755'
+              owner: ec2-user
+              group: ec2-user
+            "/home/ec2-user/crontab":
+              content: "* * * * * /usr/sbin/nfsstat | /home/ec2-user/post_nfsstat"
+              owner: ec2-user
+              group: ec2-user
+
+# commands to be executed on the EC2 instance
+          commands:
+            # create Mountpoint
+            01_createdir:
+              command: !Sub "mkdir -p /${MountPoint}"
+            # get the container-instance-id of the local ec2 instance to use it for the log-names
+            00_configure_ecs_agent:
+              command: |
+                #!/bin/bash
+                  echo ECS_INSTANCE_ATTRIBUTES={\"ec2_instance\":\"$(wget -q -O - http://169.254.169.254/latest/meta-data/instance-id)\"} >> /etc/ecs/ecs.config
+
+# enable the services to run
+          services:
+              sysvinit:
+                  cfn-hup:
+                      enabled: true
+                      ensureRunning: true
+                      files:
+                          - /etc/cfn/cfn-hup.conf
+                          - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+                  awslogs:
+                      enabled: true
+                      ensureRunning: true
+                      files:
+                          - /etc/awslogs/awslogs.conf
+                          - /etc/awslogs/awscli.conf
+
+
+# the Mount Config set
+        mount:
+          commands:
+            # mounts the EFS System
+            01_mount:
+              command:
+                Fn::Join:
+                  - ""
+                  - - "mount -t nfs4 -o nfsvers=4.1 "
+                    - Fn::ImportValue:
+                        !Sub ${EnvironmentName}-${Project}-EFSFilesystem
+                    - ".efs."
+                    - !Sub ${AWS::Region}
+                    - ".amazonaws.com:/ /"
+                    - !Ref MountPoint
+            # adds mount to fstab so that it auto-mounts on reboot
+            02_fstab:
+              command:
+                Fn::Join:
+                  - ""
+                  - - "echo \""
+                    - Fn::ImportValue:
+                        !Sub ${EnvironmentName}-${Project}-EFSFilesystem
+                    - ".efs."
+                    - !Sub ${AWS::Region}
+                    - ".amazonaws.com:/ /"
+                    - !Ref MountPoint
+                    - " nfs4 nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2 0 0\" >> /etc/fstab"
+            # recursively changes EFS mount ownership
+            03_permissions:
+              command: !Sub "chown -R ec2-user:ec2-user /${MountPoint}"
+            # restarts Docker daemon to include mounted EFS
+            04_restart_docker_and_ecs:
+              command: !Sub "service docker restart && start ecs"
+
+
+
+
+
+Outputs:
+    StackName:
+       Description: The Name of the Stack
+       Value: !Ref AWS::StackName
+
+    LaunchtemplateDefaultVersion:
+       Description: The DefaultVersionNumber of the Launchtemplate
+       Value: !GetAtt ECSLaunchTemplate.DefaultVersionNumber
+       Export:
+         Name: !Sub ${EnvironmentName}-DefaultVersionNumberLaunchTemplate
+
+    LaunchtemplateLatestVersion:
+       Description: The LatestVersionNumber of the Launchtemplate
+       Value: !GetAtt ECSLaunchTemplate.LatestVersionNumber
+       Export:
+         Name: !Sub ${EnvironmentName}-LatestVersionNumberLaunchTemplate
+
+    LaunchtemplateID:
+       Description: returns the ID of the Launchtemplate
+       Value: !Ref ECSLaunchTemplate
+       Export:
+         Name: !Sub ${EnvironmentName}-LaunchTemplateId

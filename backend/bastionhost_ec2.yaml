@@ -1,0 +1,355 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  creates  Bastion Hosts instances in the public subnets of the existing VPC
+  Bastion Hosts will be created in each Availability Zone
+  Last Modified: 17.06.2024
+  Author: Exec <aerioeus@gmail.com>
+
+Metadata: {}
+Mappings: {}
+Conditions: {}
+
+Parameters:
+  Owner:
+    Description: Individual Name Responsible for the Stack
+    Type : 'AWS::SSM::Parameter::Value<String>'
+    Default: /energicos/LEAD-DEVELOPER_NAME
+
+  Project:
+    Description: The project name
+    Type : 'AWS::SSM::Parameter::Value<String>'
+    Default: /energicos/PROJECT_ASA
+
+  Subproject:
+    Description: Enter Project Name
+    Type : 'AWS::SSM::Parameter::Value<String>'
+    Default: /energicos/GLOBAL
+
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names
+    Type : 'AWS::SSM::Parameter::Value<String>'
+    Default: /energicos/ENVIRONMENT_NAME
+
+  # sets the allowed instance sizes
+  InstanceType:
+    Description: EC2 instance specs configuration
+    Type: "AWS::SSM::Parameter::Value<String>"
+    Default: BastionHostSize2Dev
+
+  # passes on the standard image for ec2 instances
+  LatestAmiId:
+    Description: the latest AWS Linux2 AMI
+    Type: "AWS::SSM::Parameter::Value<String>"
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+
+  MountPoint: # delivers the mountpoint name for the command to create the mountpoint directory further down
+    Description: The Linux mount point for the EFS volume
+    Type: String
+    MinLength: "1"
+    Default: efs-mount-point
+
+  # Alarmparameter
+  AlarmthresholdEC2a:
+    Description: Treshold for number of surplus credits that have been spent by an unlimited instance when its CPUCreditBalance value is zero
+    Type: String
+    Default: '1'
+
+  AlarmthresholdEC2b:
+    Description: Treshold for number of surplus credits that have been spent by an unlimited instance when its CPUCreditBalance value is zero
+    Type: String
+    Default: '0'
+
+Resources:
+  Bastionhost1:
+    Type: AWS::EC2::Instance
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId:
+          Fn::ImportValue: !Sub BastionHostLaunchTemplateId
+        Version:
+          Fn::ImportValue: !Sub ${EnvironmentName}-BastionHostLatestVersionNumberLaunchTemplate
+      SubnetId:
+        Fn::ImportValue: !Sub ${EnvironmentName}-PublicSubnet1
+      Monitoring: true
+      DisableApiTermination: false
+      Tags:
+        - Key: Name
+          Value: BastionHost_AZ1
+
+  Bastionhost2:
+    Type: AWS::EC2::Instance
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId:
+          Fn::ImportValue: !Sub ${EnvironmentName}-BastionHostLaunchTemplateId
+        Version:
+          Fn::ImportValue: !Sub ${EnvironmentName}-BastionHostLatestVersionNumberLaunchTemplate
+      SubnetId:
+        Fn::ImportValue: !Sub ${EnvironmentName}-PublicSubnet2
+      Monitoring: true
+      DisableApiTermination: false
+      Tags:
+        - Key: Name
+          Value: BastionHost_AZ2
+
+  Bastionhost3:
+    Type: AWS::EC2::Instance
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId:
+          Fn::ImportValue: !Sub ${EnvironmentName}-BastionHostLaunchTemplateId
+        Version:
+          Fn::ImportValue: !Sub ${EnvironmentName}-BastionHostLatestVersionNumberLaunchTemplate
+      SubnetId:
+        Fn::ImportValue: !Sub ${EnvironmentName}-PublicSubnet3
+      Monitoring: true
+      DisableApiTermination: false
+      Tags:
+        - Key: Name
+          Value: BastionHost_AZ3
+
+  # ALARMS
+  # CPU Surplus Credit Balance
+  CPUSurplusCreditBalanceBastion1Alarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: monitor number of surplus credits that have been spent by an unlimited instance when its CPUCreditBalance value is zero
+      Namespace: AWS/EC2
+      MetricName: CPUSurplusCreditBalance
+      Dimensions:
+      - Name: InstanceId
+        Value: !Ref Bastionhost1
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: !Ref AlarmthresholdEC2a
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+      - Fn::ImportValue: !Sub ${EnvironmentName}-EC2TopicARN
+      InsufficientDataActions:
+      - Fn::ImportValue: !Sub ${EnvironmentName}-EC2TopicARN
+      OKActions:
+      - Fn::ImportValue: !Sub ${EnvironmentName}-EC2TopicARN
+      TreatMissingData:  notBreaching
+
+  CPUSurplusCreditBalanceBastion2Alarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: monitor number of surplus credits that have been spent by an unlimited instance when its CPUCreditBalance value is zero
+      Namespace: AWS/EC2
+      MetricName: CPUSurplusCreditBalance
+      Dimensions:
+      - Name: InstanceId
+        Value: !Ref Bastionhost2
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: !Ref AlarmthresholdEC2a
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+      - Fn::ImportValue: !Sub ${EnvironmentName}-EC2TopicARN
+      InsufficientDataActions:
+      - Fn::ImportValue: !Sub ${EnvironmentName}-EC2TopicARN
+      OKActions:
+      - Fn::ImportValue: !Sub ${EnvironmentName}-EC2TopicARN
+      TreatMissingData:  notBreaching
+
+  CPUSurplusCreditBalanceBastion3Alarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: monitor number of surplus credits that have been spent by an unlimited instance when its CPUCreditBalance value is zero
+      Namespace: AWS/EC2
+      MetricName: CPUSurplusCreditBalance
+      Dimensions:
+      - Name: InstanceId
+        Value: !Ref Bastionhost3
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: !Ref AlarmthresholdEC2a
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+      - Fn::ImportValue: !Sub ${EnvironmentName}-EC2TopicARN
+      InsufficientDataActions:
+      - Fn::ImportValue: !Sub ${EnvironmentName}-EC2TopicARN
+      OKActions:
+      - Fn::ImportValue: !Sub ${EnvironmentName}-EC2TopicARN
+      TreatMissingData:  notBreaching
+
+  # StatusCheckFailed
+  StatusCheckFailedBastion1Alarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: monitor whether the instance has passed both the instance status check and the system status check in the last minute
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed
+      Dimensions:
+      - Name: InstanceId
+        Value: !Ref Bastionhost1
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: !Ref AlarmthresholdEC2b
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+      - Fn::ImportValue: !Sub ${EnvironmentName}-EC2TopicARN
+      InsufficientDataActions:
+      - Fn::ImportValue: !Sub ${EnvironmentName}-EC2TopicARN
+      OKActions:
+      - Fn::ImportValue: !Sub ${EnvironmentName}-EC2TopicARN
+      TreatMissingData:  notBreaching
+
+  StatusCheckFailedBastion2Alarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: monitor whether the instance has passed both the instance status check and the system status check in the last minute
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed
+      Dimensions:
+      - Name: InstanceId
+        Value: !Ref Bastionhost1
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: !Ref AlarmthresholdEC2b
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+      - Fn::ImportValue: !Sub ${EnvironmentName}-EC2TopicARN
+      InsufficientDataActions:
+      - Fn::ImportValue: !Sub ${EnvironmentName}-EC2TopicARN
+      OKActions:
+      - Fn::ImportValue: !Sub ${EnvironmentName}-EC2TopicARN
+      TreatMissingData:  notBreaching
+
+  StatusCheckFailedBastion3Alarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: monitor whether the instance has passed both the instance status check and the system status check in the last minute
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed
+      Dimensions:
+      - Name: InstanceId
+        Value: !Ref Bastionhost1
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: !Ref AlarmthresholdEC2b
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+      - Fn::ImportValue: !Sub ${EnvironmentName}-EC2TopicARN
+      InsufficientDataActions:
+      - Fn::ImportValue: !Sub ${EnvironmentName}-EC2TopicARN
+      OKActions:
+      - Fn::ImportValue: !Sub ${EnvironmentName}-EC2TopicARN
+      TreatMissingData:  notBreaching
+
+Outputs:
+  StackName:
+    Description: shows the Stackname
+    Value: !Ref AWS::StackName
+    Export:
+      Name: Dev-Stackname-Bastionhost
+
+  # Instance IDs
+  InstanceId1:
+    Description: InstanceId of Bastionhost1
+    Value: !Ref Bastionhost1
+    Export:
+      Name: !Sub ${EnvironmentName}-InstanceId-Bastionhost1
+
+  InstanceId2:
+    Description: InstanceId of Bastionhost2
+    Value: !Ref Bastionhost2
+    Export:
+      Name: !Sub ${EnvironmentName}-InstanceId-Bastionhost2
+
+  InstanceId3:
+    Description: InstanceId of Bastionhost3
+    Value: !Ref Bastionhost3
+    Export:
+      Name: !Sub ${EnvironmentName}-InstanceId-Bastionhost3
+
+  # Availability Zones
+  AvailabilityZone1:
+    Description: Availability Zone of Bastionhost1
+    Value: !GetAtt [Bastionhost1, AvailabilityZone]
+    Export:
+      Name: !Sub ${EnvironmentName}-AvailabilityZone-Bastionhost1
+
+  AvailabilityZone2:
+    Description: Availability Zone of Bastionhost2
+    Value: !GetAtt [Bastionhost2, AvailabilityZone]
+    Export:
+      Name: !Sub ${EnvironmentName}-AvailabilityZone-Bastionhost2
+
+  AvailabilityZone3:
+    Description: Availability Zone of Bastionhost3
+    Value: !GetAtt [Bastionhost3, AvailabilityZone]
+    Export:
+      Name: !Sub ${EnvironmentName}-AvailabilityZone-Bastionhost3
+
+  # Public DNS
+  PublicDNS1:
+    Description: Public DNSName of Bastionhost1
+    Value: !GetAtt [Bastionhost1, PublicDnsName]
+    Export:
+      Name: !Sub ${EnvironmentName}-PublicDNS-Bastionhost1
+
+  PublicDNS2:
+    Description: Public DNSName of Bastionhost2
+    Value: !GetAtt [Bastionhost2, PublicDnsName]
+    Export:
+      Name: !Sub ${EnvironmentName}-PublicDNS-Bastionhost2
+
+  PublicDNS3:
+    Description: Public DNSName of Bastionhost3
+    Value: !GetAtt [Bastionhost3, PublicDnsName]
+    Export:
+      Name: !Sub ${EnvironmentName}-PublicDNS-Bastionhost3
+
+  # Public Ips
+  PublicIP1:
+    Description: Public IP address of Bastionhost1
+    Value: !GetAtt [Bastionhost1, PublicIp]
+    Export:
+      Name: !Sub ${EnvironmentName}-PublicIP-Bastionhost1
+
+  PublicIP2:
+    Description: Public IP address of Bastionhost2
+    Value: !GetAtt [Bastionhost2, PublicIp]
+    Export:
+      Name: !Sub ${EnvironmentName}-PublicIP-Bastionhost2
+
+  PublicIP3:
+    Description: Public IP address of Bastionhost3
+    Value: !GetAtt [Bastionhost3, PublicIp]
+    Export:
+      Name: !Sub ${EnvironmentName}-PublicIP-Bastionhost3
+
+  # Private Ips
+  PrivateIP1:
+    Description: private IP address of Bastionhost1
+    Value:
+      Fn::GetAtt:
+        - Bastionhost1
+        - PrivateIp
+    Export:
+      Name: !Sub ${EnvironmentName}-PrivateIP-Bastionhost1
+
+  PrivateIP2:
+    Description: private IP address of Bastionhost1
+    Value:
+      Fn::GetAtt:
+        - Bastionhost2
+        - PrivateIp
+    Export:
+      Name: !Sub ${EnvironmentName}-PrivateIP-Bastionhost2
+
+  PrivateIP3:
+    Description: private IP address of Bastionhost3
+    Value:
+      Fn::GetAtt:
+        - Bastionhost3
+        - PrivateIp
+    Export:
+      Name: !Sub ${EnvironmentName}-PrivateIP-Bastionhost3

@@ -1,0 +1,209 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  This template creates a Launchtemplate for EC2 instances which mount an existing EFS System
+  Last Modified: 01.11.2018
+  Author: Exec <aerioeus@gmail.com>
+
+
+Parameters:
+  Owner:
+    Description: Enter Team or Individual Name Responsible for the Stack.
+    Type: String
+    Default: Andreas Rose
+
+  Project:
+    Description: Enter Project Name.
+    Type: String
+    Default: invoicegenerator
+
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names
+    Type : 'AWS::SSM::Parameter::Value<String>'
+    Default: /energicos/ENVIRONMENT_NAME
+
+  Version:
+    Description: Select a valid and existing KeyPair name
+    Type: String
+    Default: Version1
+
+  EFSDirectory: # delivers the mountpoint name for the command to create the mountpoint directory further down
+    Description: The Linux mount point for the EFS volume
+    Type: String
+    MinLength: "1"
+    Default: BastionhostEFS-Directory
+
+  # sets the allowed instance sizes
+  InstanceType:
+    Description: EC2 instance specs configuration
+    Type: 'AWS::SSM::Parameter::Value<String>'
+    Default: BastionHostSize2Dev
+
+  # passes on the standard image for ec2 instances
+  LatestAmiId:
+    Description: the latest AWS Linux2 AMI
+    Type: 'AWS::SSM::Parameter::Value<String>'
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+
+  ShutdownBehavior:
+    Description: Indicates whether an instance stops or terminates when you shut down the instance
+    Type: String
+    Default: terminate
+    AllowedValues:
+      - stop
+      - terminate
+
+Resources:
+  BastionHostLaunchtemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: BastionHostLaunchtemplate
+      LaunchTemplateData:
+        InstanceInitiatedShutdownBehavior: !Ref ShutdownBehavior
+        IamInstanceProfile:
+          Arn:
+            Fn::ImportValue: !Sub ${EnvironmentName}-EC2BastionHostInstanceProfileARN
+        SecurityGroupIds:
+          - Fn::ImportValue: !Sub ${EnvironmentName}-BastianHostSecurityGroupID
+        KeyName:
+          Fn::ImportValue: !Sub ${EnvironmentName}-EC2KeyPairName
+        ImageId: !Ref LatestAmiId
+        InstanceType: !Ref InstanceType
+        Monitoring:
+          Enabled: true
+        CreditSpecification:
+          CpuCredits: standard
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: "name"
+                Value: "BastionHost-launchtemplate"
+        UserData:
+          "Fn::Base64": !Sub |
+            #!/bin/bash
+            yum install -y aws-cfn-bootstrap hibagent
+            # The cfn-init helper script reads template metadata from the AWS::CloudFormation::Init key and acts accordingly to:
+            # - Fetch and parse metadata from AWS CloudFormation
+            # - Install packages
+            # - Write files to disk
+            # - Enable/disable and start/stop services
+            /opt/aws/bin/cfn-init -v --region ${AWS::Region} --stack ${AWS::StackName} --resource BastionHostLaunchtemplate
+            # Start awslogs agent
+            sudo systemctl start awslogsd
+            sudo systemctl enable awslogsd.service
+
+    Metadata:
+      AWS::CloudFormation::Init:
+        config:
+          packages:
+            yum:
+              awslogs: []
+
+          files:
+            # The cfn-hup helper is a daemon that detects changes in resource metadata and runs user-specified
+            # actions when a change is detected.
+            "/etc/cfn/cfn-hup.conf":
+              mode: 000400
+              owner: root
+              group: root
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+
+            # This allows Cloudformation to be aware when changes are made at the Metadata section.
+            # Otherwise, Cloudformation wouldn't notice changes in this sections.
+            "/etc/cfn/hooks.d/cfn-auto-reloader.conf":
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.BastionHostLaunchtemplate.Metadata.AWS::CloudFormation::Init
+
+            # By default, the logs at cloudwatch are sent to the us-east-1 region
+            # That's why we need to configure the file `/etc/awslogs/awscli.conf`.
+            # It's a very similar process to type `aws configure` at your terminal and specify the region from which you want
+            # cloudformation to work.
+            "/etc/awslogs/awscli.conf":
+              content: !Sub |
+                [plugins]
+                cwlogs = cwlogs
+                [default]
+                region = ${AWS::Region}
+
+            # This block configures which logs must be sent to Cloudwatch.
+            # Multiple logs can be generated at the filesystem, thus we choose the name of the files that contain the logs
+            # and their respective Cloudwatch log groups that will store them.
+            "/etc/awslogs/awslogs.conf":
+              content: !Sub |
+                [general]
+                state_file = /var/lib/awslogs/agent-state
+
+                [/var/log/dmesg]
+                file = /var/log/dmesg
+                log_group_name=${EnvironmentName}-BastionHost-/var/log/dmesg
+                log_stream_name={instance_id}
+
+                [/var/log/messages]
+                file = /var/log/messages
+                log_group_name=${EnvironmentName}-BastionHost-/var/log/messages
+                log_stream_name={instance_id}
+                datetime_format = %b %d %H:%M:%S
+
+          commands:
+            00_create_efs_global_directory:
+              command: !Sub |
+                sudo mkdir /home/ec2-user/${EFSDirectory}
+                sudo chown -R ec2-user:ec2-user /home/ec2-user/${EFSDirectory}
+
+            01_mount_efs_system:
+              command: !Sub
+                - mount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2 ${EFSId}.efs.${AWS::Region}.amazonaws.com:/ /home/ec2-user/${EFSDirectory}
+                - EFSId:
+                    Fn::ImportValue:
+                      !Sub ${EnvironmentName}-${Project}-EC2EFSFileSystem
+
+            02_auto_mount_efs_on_reboot:
+              command: !Sub
+                - |
+                  echo "${EFSId}:/ /home/ec2-user/${EFSDirectory} nfs4 nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport 0 0 " >> /etc/fstab
+                - EFSId:
+                    Fn::ImportValue:
+                      !Sub ${EnvironmentName}-${Project}-EC2EFSFileSystem
+
+          # enable the services to run
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: true
+                ensureRunning: true
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+              awslogs:
+                enabled: true
+                ensureRunning: true
+                files:
+                  - /etc/awslogs/awslogs.conf
+                  - /etc/awslogs/awscli.conf
+
+Outputs:
+  StackName:
+    Description: The Name of the Stack
+    Value: !Ref AWS::StackName
+
+  BastionHostLaunchtemplateDefaultVersion:
+    Description: The DefaultVersionNumber of the Launchtemplate
+    Value: !GetAtt BastionHostLaunchtemplate.DefaultVersionNumber
+    Export:
+      Name: !Sub ${EnvironmentName}-BastionHostDefaultVersionNumberLaunchTemplate
+
+  BastionHostLaunchtemplateLatestVersion:
+    Description: The LatestVersionNumber of the Launchtemplate
+    Value: !GetAtt BastionHostLaunchtemplate.LatestVersionNumber
+    Export:
+      Name: !Sub ${EnvironmentName}-BastionHostLatestVersionNumberLaunchTemplate
+
+  BastionHostLaunchtemplateID:
+    Description: returns the ID of the Launchtemplate
+    Value: !Ref BastionHostLaunchtemplate
+    Export:
+      Name: !Sub ${EnvironmentName}-BastionHostLaunchTemplateId

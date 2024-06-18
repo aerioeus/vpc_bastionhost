@@ -1,0 +1,499 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  This template contains the security groups required by our entire stack.
+  We create them in a seperate nested template, so they can be referenced
+  by all of the other nested templates
+  Last Modified: 17.06.2024
+  Author: Exec <aerioeus@gmail.com>
+
+Metadata: {}
+Mappings: {}
+Conditions: {}
+
+Parameters:
+  Owner:
+    Description: Individual Name Responsible for the Stack
+    Type : 'AWS::SSM::Parameter::Value<String>'
+    Default: /energicos/LEAD-DEVELOPER_NAME
+
+  Project:
+    Description: The project name
+    Type : 'AWS::SSM::Parameter::Value<String>'
+    Default: /energicos/PROJECT_ASA
+
+  Subproject:
+    Description: Enter Project Name
+    Type : 'AWS::SSM::Parameter::Value<String>'
+    Default: /energicos/GLOBAL
+
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names
+    Type : 'AWS::SSM::Parameter::Value<String>'
+    Default: /energicos/ENVIRONMENT_NAME
+
+  VPC:
+    Type: String
+    Description: VPC ID the security groups should be deployed to
+
+  SSHLocation:
+    Description: The IP address range that can be used to connect to the EC2 instances by using SSH
+    Type: String
+    MinLength: "9"
+    MaxLength: "18"
+    Default: 87.254.251.87/32
+    AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+
+Resources:
+  # this is the security group for Internet-facing Load Balancer
+  ALBInternetSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${EnvironmentName}-ALBInternet-Securitygroup
+      GroupDescription: Allow ALL inbound traffic on the load balancer listener port
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: "-1"
+          FromPort: "0"
+          ToPort: "65535"
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: "-1"
+          FromPort: "0"
+          ToPort: "65535"
+          CidrIpv6: ::/0
+
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-ALBInternet_SG
+
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          FromPort: "0"
+          ToPort: "65535"
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: "-1"
+          FromPort: "0"
+          ToPort: "65535"
+          CidrIpv6: ::/0
+
+  # this is the security group for Internal Load Balancer
+  ALBInternalSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${EnvironmentName}-ALBInternal-Securitygroup
+      GroupDescription: Allow inbound traffic from the VPC CIDR on the load balancer listener port
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: "22"
+          ToPort: "22"
+          CidrIp: 172.16.0.0/20
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-ALBInternalSG
+
+  OutboundRule:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      Description: Allow outbound traffic to instances on the instance listener port
+      IpProtocol: "-1"
+      FromPort: "0"
+      ToPort: "65535"
+      DestinationSecurityGroupId:
+        Fn::GetAtt:
+          - RDSSecurityGroup
+          - GroupId
+      GroupId:
+        Fn::GetAtt:
+          - ALBInternalSecurityGroup
+          - GroupId
+
+  # this is the security group for ECS container instances
+  ECSInstancesSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${EnvironmentName}-ECSSG
+      GroupDescription: Allow all traffic to the ECS container instances
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: "22"
+          ToPort: "22"
+          CidrIp: 87.254.251.87/32
+        - IpProtocol: tcp
+          FromPort: "80"
+          ToPort: "80"
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: "443"
+          ToPort: "460"
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: "22"
+          ToPort: "22"
+          CidrIp: 213.160.10.130/32
+
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          FromPort: "0"
+          ToPort: "65535"
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: "-1"
+          FromPort: "0"
+          ToPort: "65535"
+          CidrIpv6: ::/0
+<<<<<<< HEAD
+
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-ECS_SG
+
+  InboundRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: "-1"
+      FromPort: "0"
+      ToPort: "65535"
+      SourceSecurityGroupId:
+        Fn::GetAtt:
+          - ALBInternetSecurityGroup
+          - GroupId
+      GroupId:
+        Fn::GetAtt:
+          - ECSInstancesSecurityGroup
+          - GroupId
+
+  # this is the EC2 security group for publicly available EC2 Instances
+  PublicSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${EnvironmentName}-PublicEC2SG
+      GroupDescription: Allow public access to EC2 instances in public subnets
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: "-1"
+          FromPort: "0"
+          ToPort: "65535"
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: "-1"
+          FromPort: "0"
+          ToPort: "65535"
+          CidrIpv6: ::/0
+=======
+        Tags:
+          - Key: Name
+            Value: !Sub ${EnvironmentName}-RDS_SG
+
+    InboundRuleBastionHost:
+       Type: AWS::EC2::SecurityGroupIngress
+       Properties:
+        IpProtocol: '-1'
+        FromPort: '0'
+        ToPort: '65535'
+        SourceSecurityGroupId:
+           Fn::GetAtt:
+           - BastianHostSecurityGroup
+           - GroupId
+        GroupId:
+          Fn::GetAtt:
+           - RDSSecurityGroup
+           - GroupId
+
+    InboundRuleALBInternal:
+       Type: AWS::EC2::SecurityGroupIngress
+       Properties:
+        IpProtocol: '-1'
+        FromPort: '0'
+        ToPort: '65535'
+        SourceSecurityGroupId:
+           Fn::GetAtt:
+           - ALBInternalSecurityGroup
+           - GroupId
+        GroupId:
+          Fn::GetAtt:
+           - RDSSecurityGroup
+           - GroupId
+
+Outputs:
+    StackName:
+        Description: returns the Stack Name
+        Value: !Ref AWS::StackName
+
+    # returns the Security group names (only for security groups in default vpcs)
+    ALBInternetSecurityGroupName:
+        Description: returns the security group name for the ALBInternetSecurityGroup
+        Value: !Ref ALBInternetSecurityGroup
+
+    ALBInternalSecurityGroupName:
+        Description: returns the security group name for the ALBInternalSecurityGroup
+        Value: !Ref ALBInternalSecurityGroup
+
+    ECSInstancesSecurityGroupName:
+        Description: returns the security group name for the ECSInstancesSecurityGroup
+        Value: !Ref ECSInstancesSecurityGroup
+
+    PublicSecurityGroupName:
+        Description: returns the security group name for the PublicSecurityGroup
+        Value: !Ref PublicSecurityGroup
+
+    BastianHostSecurityGroupName:
+        Description: returns the security group name for the Bastion Host
+        Value: !Ref BastianHostSecurityGroup
+
+    InstanceSecurityGroupName:
+        Description: returns the security group name for the InstanceSecurityGroup
+        Value: !Ref InstanceSecurityGroup
+
+    MountTargetSecurityGroupName:
+        Description: returns the security group name for the MountTargetSecurityGroup
+        Value: !Ref MountTargetSecurityGroup
+
+    RDSSecurityGroupName:
+        Description: returns the security group name for the RDSSecurityGroup
+        Value: !Ref RDSSecurityGroup
+
+    # returns the groupIds
+
+    ALBInternetSecurityGroupID:
+        Description: returns the security group ID for the ALBInternetSecurityGroup
+        Value: !GetAtt ALBInternetSecurityGroup.GroupId
+>>>>>>> origin/Exec
+
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          FromPort: "0"
+          ToPort: "65535"
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: "-1"
+          FromPort: "0"
+          ToPort: "65535"
+          CidrIpv6: ::/0
+
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-public_EC2_SG
+
+  # this is the EC2 security group for the Bastion Host
+  BastianHostSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${EnvironmentName}-BastionHostSG
+      GroupDescription: Allow SSH to Bastion Host
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: "22"
+          ToPort: "22"
+          CidrIp: 0.0.0.0/0
+
+      # outbound rules; You can specify -1 for all protocols
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          FromPort: "0"
+          ToPort: "65535"
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: "-1"
+          FromPort: "0"
+          ToPort: "65535"
+          CidrIpv6: ::/0
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-Bastion_Host_SG
+
+  # this is the EC2 security group for the EFS System
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${EnvironmentName}-EFSEC2SG
+      GroupDescription: Enable SSH access via port 22
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: "22"
+          ToPort: "22"
+          CidrIp: !Ref SSHLocation
+        - IpProtocol: tcp
+          FromPort: "22"
+          ToPort: "22"
+          CidrIp: 87.254.251.87/32
+        - IpProtocol: tcp
+          FromPort: "22"
+          ToPort: "22"
+          CidrIp: 79.226.112.220/32
+        - IpProtocol: tcp
+          FromPort: "22"
+          ToPort: "22"
+          CidrIp: 213.160.10.130/32
+        - IpProtocol: tcp
+          FromPort: "3306"
+          ToPort: "3306"
+          CidrIp: !Ref SSHLocation
+
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: "0"
+          ToPort: "65535"
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: "0"
+          ToPort: "65535"
+          CidrIpv6: ::/0
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-EFS_EC2_SG
+
+  # this is the Mount security group for the EFS System
+  MountTargetSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupName: !Sub ${EnvironmentName}-EFSMountSG
+      GroupDescription: Security group for mount target
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: "2049"
+          ToPort: "2049"
+          CidrIp: 0.0.0.0/0
+
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: "0"
+          ToPort: "65535"
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: "0"
+          ToPort: "65535"
+          CidrIpv6: ::/0
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-EFS_mount_SG
+
+  # this is the security group for RDS Instances
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupName: !Sub ${EnvironmentName}-RDSSG
+      GroupDescription: Security group RDS Instances
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 87.254.251.87/32
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 91.7.58.225/32
+
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: "0"
+          ToPort: "65535"
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: "0"
+          ToPort: "65535"
+          CidrIpv6: ::/0
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-RDS_SG
+
+  InboundRuleBastionHost:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: "-1"
+      FromPort: "0"
+      ToPort: "65535"
+      SourceSecurityGroupId:
+        Fn::GetAtt:
+          - BastianHostSecurityGroup
+          - GroupId
+      GroupId:
+        Fn::GetAtt:
+          - RDSSecurityGroup
+          - GroupId
+
+  InboundRuleALBInternal:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: "-1"
+      FromPort: "0"
+      ToPort: "65535"
+      SourceSecurityGroupId:
+        Fn::GetAtt:
+          - ALBInternalSecurityGroup
+          - GroupId
+      GroupId:
+        Fn::GetAtt:
+          - RDSSecurityGroup
+          - GroupId
+
+Outputs:
+  StackName:
+    Value: !Ref AWS::StackName
+
+  # returns the Security group names (only for security groups in default vpcs)
+  ALBInternetSecurityGroupName:
+    Description: returns the security group name for the ALBInternetSecurityGroup
+    Value: !Ref ALBInternetSecurityGroup
+
+  ALBInternalSecurityGroupName:
+    Description: returns the security group name for the ALBInternalSecurityGroup
+    Value: !Ref ALBInternalSecurityGroup
+
+  ECSInstancesSecurityGroupName:
+    Description: returns the security group name for the ECSInstancesSecurityGroup
+    Value: !Ref ECSInstancesSecurityGroup
+
+  PublicSecurityGroupName:
+    Description: returns the security group name for the PublicSecurityGroup
+    Value: !Ref PublicSecurityGroup
+
+  BastianHostSecurityGroupName:
+    Description: returns the security group name for the Bastion Host
+    Value: !Ref BastianHostSecurityGroup
+
+  InstanceSecurityGroupName:
+    Description: returns the security group name for the InstanceSecurityGroup
+    Value: !Ref InstanceSecurityGroup
+
+  MountTargetSecurityGroupName:
+    Description: returns the security group name for the MountTargetSecurityGroup
+    Value: !Ref MountTargetSecurityGroup
+
+  RDSSecurityGroupName:
+    Description: returns the security group name for the RDSSecurityGroup
+    Value: !Ref RDSSecurityGroup
+
+  # returns the groupIds
+  ALBInternetSecurityGroupID:
+    Description: returns the security group ID for the ALBInternetSecurityGroup
+    Value: !GetAtt ALBInternetSecurityGroup.GroupId
+
+  ALBInternalSecurityGroupID:
+    Description: returns the security group ID for the ALBInternalSecurityGroup
+    Value: !GetAtt ALBInternalSecurityGroup.GroupId
+
+  ECSInstancesSecurityGroupID:
+    Description: returns the security group ID for the ECSInstancesSecurityGroup
+    Value: !GetAtt ECSInstancesSecurityGroup.GroupId
+
+  PublicSecurityGroupID:
+    Description: returns the security group ID for the PublicSecurityGroup
+    Value: !GetAtt PublicSecurityGroup.GroupId
+
+  BastianHostSecurityGroupID:
+    Description: returns the security group ID for the Bastion Host
+    Value: !GetAtt BastianHostSecurityGroup.GroupId
+
+  InstanceSecurityGroupID:
+    Description: returns the security group ID for the InstanceSecurityGroup
+    Value: !GetAtt InstanceSecurityGroup.GroupId
+
+  MountTargetSecurityGroupID:
+    Description: returns the security group ID for the MountTargetSecurityGroup
+    Value: !GetAtt MountTargetSecurityGroup.GroupId
+
+  RDSSecurityGroupID:
+    Description: returns the security group ID for the RDSSecurityGroup
+    Value: !GetAtt RDSSecurityGroup.GroupId
