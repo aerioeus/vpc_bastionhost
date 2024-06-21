@@ -272,7 +272,7 @@ Resources:
         - Key: Name
           Value: !Sub ${EnvironmentName} NATGateway3
 
-  # create Route Table fot the public Routes
+  # create Route Table for the public Routes
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     DependsOn: VPC
